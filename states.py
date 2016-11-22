@@ -17,7 +17,7 @@ class State:
         self.goal = goal
         self.material = material
         self.pos = pos
-        self.terminal = terminal
+        self.terminal_code = terminal
 
     def perform_action(self, action):
         # 0 => right
@@ -37,37 +37,43 @@ class State:
             if self.pos[1] > 0:
                 return self._transition_to_new_state((self.pos[0], self.pos[1] - 1))
 
-        # If we haven't returned already it means we tried to go out of bounds.
-        # This leads to a terminal state.
-        new_state = State(self.goal, self.material, self.pos, True)
+        # If we haven't returned already it means we tried to go out of bounds (or used an invalid
+        # action token). This leads to a terminal state.
+        new_state = State(self.goal, self.material, self.pos, 1)
         return 0.0, new_state
 
     def as_numpy_array(self):
         return np.array([self.goal, self.material])
 
+    def terminal(self):
+        return self.terminal_code != 0
+
+    def successful(self):
+        return self.terminal_code == 2
+
     def discount_factor(self):
-        if self.terminal:
+        if self.terminal():
             return 0.
         else:
             return 1.
 
-    def _transition_to_new_state(self, pos):
+    def _transition_to_new_state(self, new_pos):
         material = np.copy(self.material)
         material[self.pos] = 0.0
-        material[pos] = 0.0
+        material[new_pos] = 0.0
         r = 0.0
-        terminal = False
-        if self.goal[pos] == 1.0:
-            terminal = True
+        terminal_code = 0
+        if self.goal[new_pos] == 1.0:
+            terminal_code = 1
         else:
-            if self.material[pos] == 1.0:
+            if self.material[new_pos] == 1.0:
                 r = 1.0
             # This sum gives the number of remaining blocks that should be milled.
             if np.sum(material - self.goal) == 0:
-                terminal = True
+                terminal_code = 2
         # This is how we convey the current position to the network.
-        material[pos] = 2.0
-        return r, State(self.goal, material, pos, terminal)
+        material[new_pos] = 2.0
+        return r, State(self.goal, material, new_pos, terminal_code)
 
 
 # Given a point within the stock region, yields all neighboring points in the stock region.
