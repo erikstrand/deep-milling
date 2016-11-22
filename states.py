@@ -42,6 +42,15 @@ class State:
         new_state = State(self.goal, self.material, self.pos, True)
         return 0.0, new_state
 
+    def as_numpy_array(self):
+        return np.array([self.goal, self.material])
+
+    def discount_factor(self):
+        if self.terminal:
+            return 0.
+        else:
+            return 1.
+
     def _transition_to_new_state(self, pos):
         material = np.copy(self.material)
         material[self.pos] = 0.0
