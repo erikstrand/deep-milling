@@ -2,6 +2,15 @@ from states import *
 import tensorflow as tf
 tf.set_random_seed(2016)
 
+# Notes
+# - What do I really want to display/record?
+#   - max_a(q(s, a)) / s.max_cumulative_score()
+# - Is penalization of non-milling moves necessary?
+#   - training samples now are dominated by "loops"
+#     - de-dupe samples?
+# - How to best set up intuitive evaluation framework
+#   - I want to save my parameters, and feed the network test cases
+
 # Network Hyperparameters
 L = 50 # neurons in first layer
 M = 30 # neurons in second layer
@@ -108,10 +117,6 @@ reward_t = tf.add(R, tf.mul(D, tf.reduce_max(Y4_t, 1)))
 expected_squared_error = tf.reduce_mean(tf.square(tf.sub(reward_t, reward_q)))
 optimize = tf.train.AdamOptimizer(learning_rate).minimize(expected_squared_error)
 
-# Link optimization of q network with update of target network
-with tf.control_dependencies([optimize]):
-    training_op = tf.group(update_averages)
-
 init = tf.initialize_all_variables()
 sess = tf.Session()
 sess.run(init)
@@ -119,32 +124,24 @@ sess.run(init)
 def train():
     global epsilon
     episodes = 0
-    # TODO encapsulate these variables in an Episode class
-    s = generate_initial_state()
-    max_cumulative_reward = s.max_cumulative_reward()
-    cumulative_reward = 0.0
-    steps = 0
+    episode = Episode()
     for i in range(0, training_cycles):
         # Generate new state/action pairs according to the current Q function
-        for k in range(0, actions_per_optimization):
+        new_transitions = 0
+        while new_transitions < actions_per_optimization:
+            s = episode.current_state
             if random.random() < epsilon:
                 a = random.randint(0, 3)
             else:
                 a = sess.run(best_action, feed_dict = {X_q: np.array([s.as_numpy_array()])})[0]
-            memory.store(s, a)
-            r, s1 = s.perform_action(a)
-            cumulative_reward += r
-            steps += 1
-            if not s1.terminal():
-                s = s1
-            else:
-                reward_fraction = cumulative_reward/max_cumulative_reward if max_cumulative_reward > 0.0 else 1.0
-                print("Episode " + str(episodes) + " terminated with score %.2f in " % reward_fraction + str(steps) + " steps")
+            if not episode.last_action_was_repeat():
+                memory.store(s, a)
+                new_transitions += 1
+            r, s1 = episode.perform_action(a)
+            if episode.in_terminal_state():
+                print("Episode " + str(episodes) + " terminated with score %.2f in " % episode.reward_fraction() + str(episode.steps) + " steps")
                 episodes += 1
-                s = generate_initial_state()
-                max_cumulative_reward = s.max_cumulative_reward()
-                cumulative_reward = 0.0
-                steps = 0
+                episode = Episode()
 
         # Get a sample
         sample = memory.sample(minibatch_size)
@@ -158,7 +155,7 @@ def train():
         discounts = gamma * np.array([s.discount_factor() for r, s in results])
 
         # Update the q and target networks.
-        sess.run(training_op, {
+        sess.run(optimize, {
             X_q: initial_states,
             X_t: final_states,
             A: actions,
@@ -166,6 +163,7 @@ def train():
             D: discounts,
             #lr: learning_rate
         })
+        sess.run(update_averages)
 
         # update epsilon
         if epsilon_wait < i <= epsilon_wait + epsilon_ramp:
