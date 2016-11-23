@@ -14,9 +14,13 @@ S = 4 # number of states (R, U, L, D)
 
 class State:
     def __init__(self, goal, material, pos, terminal):
+        # goal and material are W by H matrices.
+        # 0.0 represents empty space, and 1.0 represents material.
+        # One element of self.matieral is 2.0, namely self.pos.
         self.goal = goal
         self.material = material
         self.pos = pos
+        # 0 => non-terminal, 1 => failure, 2 => success
         self.terminal_code = terminal
 
     def perform_action(self, action):
@@ -56,6 +60,14 @@ class State:
             return 0.
         else:
             return 1.
+
+    def max_cumulative_reward(self):
+        if self.terminal():
+            return 0.0
+        # If we're not in a terminal state, self.goal[i, j] == 1.0 => self.material[i, j] == 1.0.
+        # Thus self.material - self.goal only contains positive entries. The sum of these entries
+        # is the number of blocks that remain to be milled plus 2.0.
+        return np.sum(self.material - self.goal) - 2.0
 
     def _transition_to_new_state(self, new_pos):
         material = np.copy(self.material)
