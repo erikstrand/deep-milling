@@ -8,15 +8,17 @@ M = 30 # neurons in second layer
 N = 15 # neurons in third layer
 
 # Training hyperparameters
-training_cycles = 100
+training_cycles = 10000
 memory_capacity = 5000 # samples in experience memory
 memory_initial = 100
-actions_per_sgd = 10
+actions_per_optimization = 10
 minibatch_size = 32
-target_speed = 0.01
+target_network_decay = 0.99
+learning_rate = 0.003
 
 # Q learning hyperparameters
 gamma = 0.99
+epsilon = 0.1
 
 # Memory Bank
 class MemoryBank:
@@ -58,15 +60,17 @@ B3_q = tf.Variable(tf.ones([N])/10, name="B3")
 W4_q = tf.Variable(tf.truncated_normal([N, S], stddev=0.1), name="W4")
 B4_q = tf.Variable(tf.ones([S])/10, name="B4")
 
-# Model parameters for target function
-W1_t = tf.Variable(tf.truncated_normal([W * H * 2, L], stddev=0.1))
-B1_t = tf.Variable(tf.ones([L])/10)
-W2_t = tf.Variable(tf.truncated_normal([L, M], stddev=0.1))
-B2_t = tf.Variable(tf.ones([M])/10)
-W3_t = tf.Variable(tf.truncated_normal([M, N], stddev=0.1))
-B3_t = tf.Variable(tf.ones([N])/10)
-W4_t = tf.Variable(tf.truncated_normal([N, S], stddev=0.1))
-B4_t = tf.Variable(tf.ones([S])/10)
+# The target network uses slow moving averages of the Q network.
+ema = tf.train.ExponentialMovingAverage(decay=target_network_decay)
+update_averages = ema.apply([W1_q, B1_q, W2_q, B2_q, W3_q, B3_q, W4_q, B4_q])
+W1_t = ema.average(W1_q)
+B1_t = ema.average(B1_q)
+W2_t = ema.average(W2_q)
+B2_t = ema.average(B2_q)
+W3_t = ema.average(W3_q)
+B3_t = ema.average(B3_q)
+W4_t = ema.average(W4_q)
+B4_t = ema.average(B4_q)
 
 # Placeholders
 X_q = tf.placeholder(tf.float32, [None, 2, W, H])
@@ -74,10 +78,6 @@ X_t = tf.placeholder(tf.float32, [minibatch_size, 2, W, H])
 A = tf.placeholder(tf.int32, [minibatch_size])
 R = tf.placeholder(tf.float32, [minibatch_size])
 D = tf.placeholder(tf.float32, [minibatch_size])
-
-# Learning rate and random action rate
-lr = tf.placeholder(tf.float32)
-epsilon = 0.1
 
 # The model
 XX_q = tf.reshape(X_q, [-1, 2 * W * H])
@@ -102,7 +102,11 @@ best_action = tf.argmax(Y4_q, 1)
 reward_q = tf.reduce_sum(tf.one_hot(A, S) * Y4_q, 1)
 reward_t = tf.add(R, tf.mul(D, tf.reduce_max(Y4_t, 1)))
 expected_squared_error = tf.reduce_mean(tf.square(tf.sub(reward_t, reward_q)))
-train_step = tf.train.GradientDescentOptimizer(0.1).minimize(expected_squared_error)
+optimize = tf.train.AdamOptimizer(learning_rate).minimize(expected_squared_error)
+
+# Link optimization of q network with update of target network
+with tf.control_dependencies([optimize]):
+    training_op = tf.group(update_averages)
 
 init = tf.initialize_all_variables()
 sess = tf.Session()
@@ -110,13 +114,14 @@ sess.run(init)
 
 def train():
     episodes = 0
+    # TODO encapsulate these variables in an Episode class
     s = generate_initial_state()
     max_cumulative_reward = s.max_cumulative_reward()
     cumulative_reward = 0.0
     steps = 0
     for i in range(0, training_cycles):
         # Generate new state/action pairs according to the current Q function
-        for k in range(0, actions_per_sgd):
+        for k in range(0, actions_per_optimization):
             if random.random() < epsilon:
                 a = random.randint(0, 3)
             else:
@@ -147,9 +152,8 @@ def train():
         rewards = [r for r, s in results]
         discounts = gamma * np.array([s.discount_factor() for r, s in results])
 
-        # Calculate s1 for each s.
-        # Shove initial states into X1. Shove final states into X2. Shove rewards into R.
-        sess.run(train_step, {
+        # Update the q and target networks.
+        sess.run(training_op, {
             X_q: initial_states,
             X_t: final_states,
             A: actions,
@@ -158,7 +162,6 @@ def train():
             #lr: learning_rate
         })
 
-        # every so many iterations, update target network (W_t = 0.99 * W_t + 0.01 * W_q).
 
 if __name__ == "__main__":
     train()
