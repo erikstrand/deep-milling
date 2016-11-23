@@ -12,16 +12,20 @@ H = 6
 S = 4 # number of states (R, U, L, D)
 
 
+# States are (conceptually) immutable.
 class State:
     def __init__(self, goal, material, pos, terminal):
         # goal and material are W by H matrices.
         # 0.0 represents empty space, and 1.0 represents material.
-        # One element of self.matieral is 2.0, namely self.pos.
+        # One element of self.material is 2.0, namely self.pos.
         self.goal = goal
         self.material = material
         self.pos = pos
         # 0 => non-terminal, 1 => failure, 2 => success
         self.terminal_code = terminal
+
+    def __hash__(self):
+        return hash(self.material.data)
 
     def perform_action(self, action):
         # 0 => right
@@ -85,7 +89,45 @@ class State:
                 terminal_code = 2
         # This is how we convey the current position to the network.
         material[new_pos] = 2.0
+        material.flags.writeable = False
         return r, State(self.goal, material, new_pos, terminal_code)
+
+
+class Episode:
+    def __init__(self):
+        self.current_state = generate_initial_state()
+        self.last_action = None
+        self.past_transitions = set()
+        self.max_cumulative_reward = self.current_state.max_cumulative_reward()
+        self.cumulative_reward = 0.0
+        self.steps = 0
+
+    def perform_action(self, a):
+        if self.last_action is not None:
+            self.past_transitions.add((self.last_action, hash(self.current_state)))
+        r, s = self.current_state.perform_action(a)
+        self.current_state = s
+        self.last_action = a
+        self.cumulative_reward += r
+        self.steps += 1
+
+        if self.steps == 200:
+            display_ascii(self.current_state.goal)
+        if self.steps > 200:
+            display_ascii(self.current_state.material)
+        return r, s
+
+    def last_action_was_repeat(self):
+        return (self.last_action, hash(self.current_state)) in self.past_transitions
+
+    def in_terminal_state(self):
+        return self.current_state.terminal()
+
+    def reward_fraction(self):
+        if self.max_cumulative_reward > 0.0:
+            return self.cumulative_reward / self.max_cumulative_reward
+        else:
+            return 1.0
 
 
 # Given a point within the stock region, yields all neighboring points in the stock region.
@@ -161,6 +203,7 @@ def generate_goal():
             for p in component:
                 goal[p] = 1.0
 
+    goal.flags.writeable = False
     return goal
 
 
@@ -173,6 +216,7 @@ def generate_stock(pos = (0, 0)):
         material[0, j] = 0.0
         material[W - 1, j] = 0.0
     material[pos] = 2.0
+    material.flags.writeable = False
     return material
 
 
@@ -185,10 +229,14 @@ def display_ascii(grid):
     for j in reversed(range(0, H)):
         sys.stdout.write('|')
         for i in reversed(range(0, W)):
-            if grid[i, j]:
+            if grid[i, j] == 2.0:
+                sys.stdout.write('*')
+            elif grid[i, j] == 1.0:
                 sys.stdout.write('#')
-            else:
+            elif grid[i, j] == 0.0:
                 sys.stdout.write(' ')
+            else:
+                sys.stdout.write('?')
         sys.stdout.write('|\n')
     print(' ' + W*'-')
 
