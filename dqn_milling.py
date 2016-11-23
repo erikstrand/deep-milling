@@ -8,17 +8,21 @@ M = 30 # neurons in second layer
 N = 15 # neurons in third layer
 
 # Training hyperparameters
-training_cycles = 10000
-memory_capacity = 5000 # samples in experience memory
-memory_initial = 100
-actions_per_optimization = 10
+training_cycles = 15000
+memory_capacity = 10000 # samples in experience memory
+memory_initial = 1000
+actions_per_optimization = 20
 minibatch_size = 32
 target_network_decay = 0.99
-learning_rate = 0.003
+learning_rate = 0.001
 
 # Q learning hyperparameters
 gamma = 0.99
-epsilon = 0.1
+epsilon_0 = 1.0
+epsilon_1 = 0.01
+epsilon_wait = 1000
+epsilon_ramp = 10000
+epsilon = epsilon_0
 
 # Memory Bank
 class MemoryBank:
@@ -113,6 +117,7 @@ sess = tf.Session()
 sess.run(init)
 
 def train():
+    global epsilon
     episodes = 0
     # TODO encapsulate these variables in an Episode class
     s = generate_initial_state()
@@ -162,6 +167,10 @@ def train():
             #lr: learning_rate
         })
 
+        # update epsilon
+        if epsilon_wait < i <= epsilon_wait + epsilon_ramp:
+            ramp_completion = float(i - epsilon_wait) / epsilon_ramp
+            epsilon = (1 - ramp_completion) * epsilon_0 + ramp_completion * epsilon_1
 
 if __name__ == "__main__":
     train()
