@@ -4,12 +4,17 @@ tf.set_random_seed(2016)
 
 # Notes
 # - What do I really want to display/record?
-#   - max_a(q(s, a)) / s.max_cumulative_score()
+#   - Definitely need a stats class
+#   - probably want a separate test cycle at the end of each epoch (run with no random component but where repetition is failure)
+#   - max_a(q(s, a)) / s.max_cumulative_score() i.e. how many of the remaining points we think we can get
 # - Is penalization of non-milling moves necessary?
-#   - training samples now are dominated by "loops"
-#     - de-dupe samples?
+#   - it looks like not storing repetitive behaviors is enough of a fix
 # - How to best set up intuitive evaluation framework
 #   - I want to save my parameters, and feed the network test cases
+# - Why did the recent parameter changes make things worse. Of course while epsilon is held high
+#   it performs poorly, but this seems to have persisted even after letting epsilon back down again.
+#   May need to make epsilon depend on what percentage of the blocks we've milled so far, so that
+#   the exploit/explore tradeoff depends on if we're near the opening or the endgame.
 
 # Network Hyperparameters
 L = 50 # neurons in first layer
@@ -17,7 +22,8 @@ M = 30 # neurons in second layer
 N = 15 # neurons in third layer
 
 # Training hyperparameters
-training_cycles = 15000
+training_cycles = 25000
+print_interval = 1000
 memory_capacity = 10000 # samples in experience memory
 memory_initial = 1000
 actions_per_optimization = 20
@@ -28,9 +34,9 @@ learning_rate = 0.001
 # Q learning hyperparameters
 gamma = 0.99
 epsilon_0 = 1.0
-epsilon_1 = 0.01
-epsilon_wait = 1000
-epsilon_ramp = 10000
+epsilon_1 = 0.1
+epsilon_wait = 5000
+epsilon_ramp = 15000
 epsilon = epsilon_0
 
 # Memory Bank
@@ -124,8 +130,13 @@ sess.run(init)
 def train():
     global epsilon
     episodes = 0
+    total_transitions = 0
+    stored_transitions = 0
+    max_reward = []
+    got_reward = []
+    steps = []
     episode = Episode()
-    for i in range(0, training_cycles):
+    for i in range(1, training_cycles + 1):
         # Generate new state/action pairs according to the current Q function
         new_transitions = 0
         while new_transitions < actions_per_optimization:
@@ -137,10 +148,14 @@ def train():
             if not episode.last_action_was_repeat():
                 memory.store(s, a)
                 new_transitions += 1
+                stored_transitions += 1
             r, s1 = episode.perform_action(a)
+            total_transitions += 1
             if episode.in_terminal_state():
-                print("Episode " + str(episodes) + " terminated with score %.2f in " % episode.reward_fraction() + str(episode.steps) + " steps")
                 episodes += 1
+                max_reward.append(episode.max_cumulative_reward)
+                got_reward.append(episode.cumulative_reward)
+                steps.append(episode.steps)
                 episode = Episode()
 
         # Get a sample
@@ -169,6 +184,22 @@ def train():
         if epsilon_wait < i <= epsilon_wait + epsilon_ramp:
             ramp_completion = float(i - epsilon_wait) / epsilon_ramp
             epsilon = (1 - ramp_completion) * epsilon_0 + ramp_completion * epsilon_1
+
+        # Print an update if applicable
+        if i % print_interval == 0:
+            print("Completed " + str(episodes) + " episodes with " + str(total_transitions) + " total transitions and " + str(stored_transitions) + " stored transitions")
+            all_max_rewards = sum(max_reward)
+            all_got_rewards = sum(got_reward)
+            all_steps = sum(steps)
+            print("Average reward fraction: " + str(float(all_got_rewards)/all_max_rewards) + " (of " + str(all_max_rewards) + " possible rewards)")
+            print("Average steps to completion: " + str(float(all_steps)/episodes))
+            episodes = 0
+            total_transitions = 0
+            stored_transitions = 0
+            max_reward = []
+            got_reward = []
+            steps = []
+
 
 if __name__ == "__main__":
     train()
