@@ -245,7 +245,8 @@ def generate_stock(pos = (0, 0)):
 
 
 def generate_initial_state():
-    return State(generate_goal(), generate_stock((0, 0)), (0, 0), False)
+    start = random_point_on_rectangle((0, 0), W, H)
+    return State(generate_goal(), generate_stock(start), start, False)
 
 
 def display_ascii(grid):
