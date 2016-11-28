@@ -132,6 +132,7 @@ def train():
     episodes = 0
     total_transitions = 0
     stored_transitions = 0
+    repeated_transitions = 0
     max_reward = []
     got_reward = []
     steps = []
@@ -149,6 +150,8 @@ def train():
                 memory.store(s, a)
                 new_transitions += 1
                 stored_transitions += 1
+            else:
+                repeated_transitions += 1
             r, s1 = episode.perform_action(a)
             total_transitions += 1
             if episode.in_terminal_state():
@@ -187,7 +190,8 @@ def train():
 
         # Print an update if applicable
         if i % print_interval == 0:
-            print("Completed " + str(episodes) + " episodes with " + str(total_transitions) + " total transitions and " + str(stored_transitions) + " stored transitions")
+            print("Epsilon = " + str(epsilon))
+            print("Completed " + str(episodes) + " episodes with " + str(total_transitions) + " total transitions (" + str(stored_transitions) + " stored and " + str(repeated_transitions) + " repeated)")
             all_max_rewards = sum(max_reward)
             all_got_rewards = sum(got_reward)
             all_steps = sum(steps)
@@ -196,6 +200,7 @@ def train():
             episodes = 0
             total_transitions = 0
             stored_transitions = 0
+            repeated_transitions = 0
             max_reward = []
             got_reward = []
             steps = []
