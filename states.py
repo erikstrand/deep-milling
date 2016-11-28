@@ -7,6 +7,7 @@ random.seed(2016)
 # Global constants
 # W and H determine the width and height of our grid.
 # The stock piece initially covers all (i, j) such that 1 <= i < W - 1 and 1 <= j < H - 2.
+# Thus W and H should both be larger than three, so the stock piece isn't trivially small.
 W = 6
 H = 6
 S = 4 # number of states (R, U, L, D)
@@ -157,10 +158,26 @@ def on_boundary(p):
     return False
 
 
+# Arguments: p is the "bottom left" corner, w and h are the width and height of the rectangle.
+def random_point_on_rectangle(p, w, h):
+    # It's more convenient to work with max indices than widths.
+    w -= 1
+    h -= 1
+    i = random.randint(0, 2 * (w + h))
+    if i < w:
+        return (p[0] + i, p[1])
+    elif i < w + h:
+        return (p[0] + w, p[1] + i - w)
+    elif i < 2 * w + h:
+        return (p[0] + i - (w + h), p[1] + h)
+    else:
+        return (p[0], p[1] + i - (2 * w + h))
+
+
 def generate_goal():
     goal = np.zeros((W, H), dtype=np.float32)
 
-    # Choose an initial point.
+    # Choose a seed point for the shape.
     x = random.randint(1, W - 2)
     y = random.randint(1, H - 2)
     goal[x, y] = 1.0
@@ -180,7 +197,7 @@ def generate_goal():
     for i in range(0, W):
         for j in range(0, H):
             if goal[i, j] == 0.0:
-                neighbors = [neighbor for neighbor in get_half_neighbors((i, j)) if goal[neighbor] == 0.0]
+                neighbors = [nbr for nbr in get_half_neighbors((i, j)) if goal[nbr] == 0.0]
                 if len(neighbors):
                     component_1 = point_to_component[neighbors[0]]
                     point_to_component[(i, j)] = component_1
@@ -203,6 +220,13 @@ def generate_goal():
             for p in component:
                 goal[p] = 1.0
 
+    # If we filled in the entire millable area, we need to remove a block of material.
+    if np.sum(goal) == (W - 2) * (H - 2):
+        # Accessible blocks are in a rectangle with corners (1, 1), (W - 2, 1), (W - 2, H - 2),
+        # and (1, H - 2).
+        goal[random_point_on_rectangle((1, 1), W - 2, H - 2)] = 0.0
+
+    # Finally done
     goal.flags.writeable = False
     return goal
 
