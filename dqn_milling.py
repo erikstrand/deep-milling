@@ -4,17 +4,12 @@ tf.set_random_seed(2016)
 
 # Notes
 # - What do I really want to display/record?
-#   - Definitely need a stats class
-#   - probably want a separate test cycle at the end of each epoch (run with no random component but where repetition is failure)
+#   - want a separate test cycle at the end of each epoch (run with no random component but where repetition is failure)
 #   - max_a(q(s, a)) / s.max_cumulative_score() i.e. how many of the remaining points we think we can get
 # - Is penalization of non-milling moves necessary?
 #   - it looks like not storing repetitive behaviors is enough of a fix
 # - How to best set up intuitive evaluation framework
 #   - I want to save my parameters, and feed the network test cases
-# - Why did the recent parameter changes make things worse. Of course while epsilon is held high
-#   it performs poorly, but this seems to have persisted even after letting epsilon back down again.
-#   May need to make epsilon depend on what percentage of the blocks we've milled so far, so that
-#   the exploit/explore tradeoff depends on if we're near the opening or the endgame.
 
 # Network Hyperparameters
 L = 50 # neurons in first layer
@@ -25,8 +20,8 @@ N = 15 # neurons in third layer
 training_cycles = 100000
 print_interval = 1000
 memory_capacity = 50000 # samples in experience memory
-memory_initial = 10000
-actions_per_optimization = 20
+memory_initial = 15000
+actions_per_update = 20
 minibatch_size = 64
 target_network_decay = 0.99
 learning_rate = 0.001
@@ -35,10 +30,11 @@ learning_rate = 0.001
 gamma = 0.99
 epsilon_0 = 1.0
 epsilon_1 = 0.1
-epsilon_wait = 10000
-epsilon_ramp = 80000
+epsilon_ramp = 90000.0
 epsilon = epsilon_0
 
+# Evaluation hyperparameters
+evaluation_episodes = 100
 
 class TrainingAgent:
     def __init__(self):
@@ -87,6 +83,34 @@ class TrainingAgent:
 
     def max_cumulative_reward(self):
         return self.episode.max_cumulative_reward - self.initial_reward
+
+
+class EvaluationAgent:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.episode = Episode()
+        self.q_actions = 0
+        self.random_actions = 0
+        self.repeat_attempts = 0
+        self.repeats = 0
+
+    def advance(self, evaluator):
+        s = self.episode.current_state
+        a = evaluator(s.as_numpy_array())
+        self.episode.perform_action(a)
+        terminal = self.episode.in_terminal_state() or self.episode.in_repeated_state()
+        return s, a, terminal
+
+    def actions(self):
+        return self.episode.actions()
+
+    def cumulative_reward(self):
+        return self.episode.cumulative_reward
+
+    def max_cumulative_reward(self):
+        return self.episode.max_cumulative_reward
 
 
 class StatAggregator:
@@ -204,20 +228,22 @@ sess.run(init)
 
 def train():
     global epsilon
-    agent = TrainingAgent()
-    stats = StatAggregator()
+    train_agent = TrainingAgent()
+    eval_agent = EvaluationAgent()
+    train_stats = StatAggregator()
+    eval_stats = StatAggregator()
     evaluator = lambda s: sess.run(best_action, feed_dict = {X_q: np.array([s])})[0]
     for i in range(1, training_cycles + 1):
         # Generate new state/action pairs according to the current Q function
         new_transitions = 0
-        while new_transitions < actions_per_optimization:
-            new, s, a, terminal = agent.advance(epsilon, evaluator)
+        while new_transitions < actions_per_update:
+            new, s, a, terminal = train_agent.advance(epsilon, evaluator)
             if new:
                 new_transitions += 1
                 memory.store(s, a)
             if terminal:
-                stats.update(agent)
-                agent.reset()
+                train_stats.update(train_agent)
+                train_agent.reset()
 
         # Get a sample
         sample = memory.sample(minibatch_size)
@@ -242,21 +268,39 @@ def train():
         sess.run(update_averages)
 
         # update epsilon
-        if epsilon_wait < i <= epsilon_wait + epsilon_ramp:
-            ramp_completion = float(i - epsilon_wait) / epsilon_ramp
-            epsilon = (1 - ramp_completion) * epsilon_0 + ramp_completion * epsilon_1
+        if i <= epsilon_ramp:
+            ramp_completion = float(i) / epsilon_ramp
+            epsilon = (1.0 - ramp_completion) * epsilon_0 + ramp_completion * epsilon_1
 
         # Print an update if applicable
         if i % print_interval == 0:
+            for _ in range(0, evaluation_episodes):
+                terminal = False
+                while not terminal:
+                    s, a, terminal = eval_agent.advance(evaluator)
+                eval_stats.update(eval_agent)
+                eval_agent.reset()
+
+            print("================================================================================")
             print("Epsilon = " + str(epsilon))
-            summary = "Completed " + str(stats.episodes) + " episodes with " + str(stats.actions) + " total transitions ("
-            summary += str(stats.repeat_attempts) + " repeat attempts, "
-            summary += str(stats.repeats) + " forced repeats, "
-            summary += str(float(stats.random_actions)/stats.actions*100) + "% random actions)"
+
+            summary = "Completed " + str(train_stats.episodes) + " episodes with " + str(train_stats.actions) + " total transitions ("
+            summary += str(train_stats.repeat_attempts) + " repeat attempts, "
+            summary += str(train_stats.repeats) + " forced repeats, "
+            summary += str(float(train_stats.random_actions)/train_stats.actions*100) + "% random actions)"
             print(summary)
-            print("Average reward fraction: " + str(float(stats.cumulative_reward)/stats.max_cumulative_reward) + " (of " + str(stats.max_cumulative_reward) + " possible rewards)")
-            print("Average steps to completion: " + str(float(stats.actions)/stats.episodes))
-            stats.reset()
+            print("Average reward fraction: " + str(float(train_stats.cumulative_reward)/train_stats.max_cumulative_reward) + " (of " + str(train_stats.max_cumulative_reward) + " possible rewards)")
+            print("Average steps to completion: " + str(float(train_stats.actions)/train_stats.episodes))
+            train_stats.reset()
+
+            summary = "Completed " + str(eval_stats.episodes) + " episodes with " + str(eval_stats.actions) + " total transitions ("
+            summary += str(eval_stats.repeat_attempts) + " repeat attempts, "
+            summary += str(eval_stats.repeats) + " forced repeats, "
+            summary += str(float(eval_stats.random_actions)/eval_stats.actions*100) + "% random actions)"
+            print(summary)
+            print("Average reward fraction: " + str(float(eval_stats.cumulative_reward)/eval_stats.max_cumulative_reward) + " (of " + str(eval_stats.max_cumulative_reward) + " possible rewards)")
+            print("Average steps to completion: " + str(float(eval_stats.actions)/eval_stats.episodes))
+            eval_stats.reset()
 
 
 if __name__ == "__main__":

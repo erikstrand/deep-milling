@@ -117,9 +117,6 @@ class Episode:
 
         return r, s
 
-    def in_repeated_state(self):
-        return hash(self.current_state) in self.past_transitions
-
     def unexplored_actions(self):
         h = hash(self.current_state)
         if h not in self.past_transitions:
@@ -127,6 +124,9 @@ class Episode:
         #return set(range(0, 4)) - self.past_transitions[h]
         explored = self.past_transitions[h]
         return set(i for i in range(0, 4) if i not in explored)
+
+    def in_repeated_state(self):
+        return hash(self.current_state) in self.past_transitions
 
     def in_terminal_state(self):
         return self.current_state.terminal()
