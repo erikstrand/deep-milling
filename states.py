@@ -97,13 +97,14 @@ class State:
 class Episode:
     def __init__(self):
         self.current_state = generate_initial_state()
+        self.history = []
         self.past_transitions = {}
-        self.max_cumulative_reward = self.current_state.max_cumulative_reward()
         self.cumulative_reward = 0.0
-        self.steps = 0
+        self.max_cumulative_reward = self.current_state.max_cumulative_reward()
 
     def perform_action(self, a):
         # Record the action
+        self.history.append(a)
         h = hash(self.current_state)
         if h not in self.past_transitions:
             self.past_transitions[h] = set()
@@ -113,12 +114,7 @@ class Episode:
         r, s = self.current_state.perform_action(a)
         self.current_state = s
         self.cumulative_reward += r
-        self.steps += 1
 
-        if self.steps == 200:
-            display_ascii(self.current_state.goal)
-        if self.steps > 200:
-            display_ascii(self.current_state.material)
         return r, s
 
     def in_repeated_state(self):
@@ -135,11 +131,8 @@ class Episode:
     def in_terminal_state(self):
         return self.current_state.terminal()
 
-    def reward_fraction(self):
-        if self.max_cumulative_reward > 0.0:
-            return self.cumulative_reward / self.max_cumulative_reward
-        else:
-            return 1.0
+    def actions(self):
+        return len(self.history)
 
 
 # Given a point within the stock region, yields all neighboring points in the stock region.
