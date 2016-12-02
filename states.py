@@ -97,18 +97,21 @@ class State:
 class Episode:
     def __init__(self):
         self.current_state = generate_initial_state()
-        self.last_action = None
-        self.past_transitions = set()
+        self.past_transitions = {}
         self.max_cumulative_reward = self.current_state.max_cumulative_reward()
         self.cumulative_reward = 0.0
         self.steps = 0
 
     def perform_action(self, a):
-        if self.last_action is not None:
-            self.past_transitions.add((self.last_action, hash(self.current_state)))
+        # Record the action
+        h = hash(self.current_state)
+        if h not in self.past_transitions:
+            self.past_transitions[h] = set()
+        self.past_transitions[h].add(a)
+
+        # Perform the action
         r, s = self.current_state.perform_action(a)
         self.current_state = s
-        self.last_action = a
         self.cumulative_reward += r
         self.steps += 1
 
@@ -118,8 +121,16 @@ class Episode:
             display_ascii(self.current_state.material)
         return r, s
 
-    def last_action_was_repeat(self):
-        return (self.last_action, hash(self.current_state)) in self.past_transitions
+    def in_repeated_state(self):
+        return hash(self.current_state) in self.past_transitions
+
+    def unexplored_actions(self):
+        h = hash(self.current_state)
+        if h not in self.past_transitions:
+            return set(range(0, 4))
+        #return set(range(0, 4)) - self.past_transitions[h]
+        explored = self.past_transitions[h]
+        return set(i for i in range(0, 4) if i not in explored)
 
     def in_terminal_state(self):
         return self.current_state.terminal()

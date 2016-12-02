@@ -22,12 +22,12 @@ M = 30 # neurons in second layer
 N = 15 # neurons in third layer
 
 # Training hyperparameters
-training_cycles = 25000
+training_cycles = 100000
 print_interval = 1000
-memory_capacity = 10000 # samples in experience memory
-memory_initial = 1000
+memory_capacity = 50000 # samples in experience memory
+memory_initial = 10000
 actions_per_optimization = 20
-minibatch_size = 32
+minibatch_size = 64
 target_network_decay = 0.99
 learning_rate = 0.001
 
@@ -35,8 +35,8 @@ learning_rate = 0.001
 gamma = 0.99
 epsilon_0 = 1.0
 epsilon_1 = 0.1
-epsilon_wait = 5000
-epsilon_ramp = 15000
+epsilon_wait = 10000
+epsilon_ramp = 80000
 epsilon = epsilon_0
 
 # Memory Bank
@@ -131,7 +131,6 @@ def train():
     global epsilon
     episodes = 0
     total_transitions = 0
-    stored_transitions = 0
     repeated_transitions = 0
     max_reward = []
     got_reward = []
@@ -142,18 +141,22 @@ def train():
         new_transitions = 0
         while new_transitions < actions_per_optimization:
             s = episode.current_state
-            if random.random() < epsilon:
+            unexplored_actions = episode.unexplored_actions()
+            if len(unexplored_actions) == 0:
                 a = random.randint(0, 3)
+            elif random.random() < epsilon:
+                a = random.sample(unexplored_actions, 1)[0]
             else:
                 a = sess.run(best_action, feed_dict = {X_q: np.array([s.as_numpy_array()])})[0]
-            if not episode.last_action_was_repeat():
-                memory.store(s, a)
+                if a not in unexplored_actions:
+                    a = random.sample(unexplored_actions, 1)[0]
+            if a in unexplored_actions:
                 new_transitions += 1
-                stored_transitions += 1
             else:
                 repeated_transitions += 1
-            r, s1 = episode.perform_action(a)
             total_transitions += 1
+            memory.store(s, a)
+            r, s1 = episode.perform_action(a)
             if episode.in_terminal_state():
                 episodes += 1
                 max_reward.append(episode.max_cumulative_reward)
@@ -191,7 +194,7 @@ def train():
         # Print an update if applicable
         if i % print_interval == 0:
             print("Epsilon = " + str(epsilon))
-            print("Completed " + str(episodes) + " episodes with " + str(total_transitions) + " total transitions (" + str(stored_transitions) + " stored and " + str(repeated_transitions) + " repeated)")
+            print("Completed " + str(episodes) + " episodes with " + str(total_transitions) + " total transitions (" + str(repeated_transitions) + " repeated)")
             all_max_rewards = sum(max_reward)
             all_got_rewards = sum(got_reward)
             all_steps = sum(steps)
