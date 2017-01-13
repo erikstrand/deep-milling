@@ -10,7 +10,7 @@ random.seed(2016)
 # Thus W and H should both be larger than three, so the stock piece isn't trivially small.
 W = 6
 H = 6
-S = 4 # number of states (R, U, L, D)
+A = 4 # number of actions (R, U, L, D)
 
 
 # States are (conceptually) immutable.

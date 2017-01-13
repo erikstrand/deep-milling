@@ -34,7 +34,7 @@ epsilon_ramp = 90000.0
 epsilon = epsilon_0
 
 # Evaluation hyperparameters
-evaluation_episodes = 100
+evaluation_episodes = 500
 
 class TrainingAgent:
     def __init__(self):
@@ -175,8 +175,8 @@ W2_q = tf.Variable(tf.truncated_normal([L, M], stddev=0.1), name="W2")
 B2_q = tf.Variable(tf.ones([M])/10, name="B2")
 W3_q = tf.Variable(tf.truncated_normal([M, N], stddev=0.1), name="W3")
 B3_q = tf.Variable(tf.ones([N])/10, name="B3")
-W4_q = tf.Variable(tf.truncated_normal([N, S], stddev=0.1), name="W4")
-B4_q = tf.Variable(tf.ones([S])/10, name="B4")
+W4_q = tf.Variable(tf.truncated_normal([N, A], stddev=0.1), name="W4")
+B4_q = tf.Variable(tf.ones([A])/10, name="B4")
 
 # The target network uses slow moving averages of the Q network.
 ema = tf.train.ExponentialMovingAverage(decay=target_network_decay)
@@ -193,7 +193,7 @@ B4_t = ema.average(B4_q)
 # Placeholders
 X_q = tf.placeholder(tf.float32, [None, 2, W, H])
 X_t = tf.placeholder(tf.float32, [minibatch_size, 2, W, H])
-A = tf.placeholder(tf.int32, [minibatch_size])
+action_indices = tf.placeholder(tf.int32, [minibatch_size])
 R = tf.placeholder(tf.float32, [minibatch_size])
 D = tf.placeholder(tf.float32, [minibatch_size])
 
@@ -214,10 +214,7 @@ Y4_t = tf.nn.relu(tf.matmul(Y3_t, W4_t) + B4_t)
 best_action = tf.argmax(Y4_q, 1)
 
 # Loss
-# this calculation of reward_q does not work because gather_nd is not yet differentiable
-#AA = tf.transpose(tf.pack([tf.range(minibatch_size), A]))
-#reward_q = tf.gather_nd(Y4_q, AA)
-reward_q = tf.reduce_sum(tf.one_hot(A, S) * Y4_q, 1)
+reward_q = tf.reduce_sum(tf.one_hot(action_indices, A) * Y4_q, 1)
 reward_t = tf.add(R, tf.mul(D, tf.reduce_max(Y4_t, 1)))
 expected_squared_error = tf.reduce_mean(tf.square(tf.sub(reward_t, reward_q)))
 optimize = tf.train.AdamOptimizer(learning_rate).minimize(expected_squared_error)
@@ -260,7 +257,7 @@ def train():
         sess.run(optimize, {
             X_q: initial_states,
             X_t: final_states,
-            A: actions,
+            action_indices: actions,
             R: rewards,
             D: discounts,
             #lr: learning_rate
