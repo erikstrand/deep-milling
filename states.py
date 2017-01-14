@@ -10,129 +10,132 @@ random.seed(2016)
 # Thus W and H should both be larger than three, so the stock piece isn't trivially small.
 W = 6
 H = 6
-A = 4 # number of actions (R, U, L, D)
+A = 4
 
 
 # States are (conceptually) immutable.
 class State:
-    def __init__(self, goal, material, pos, terminal):
-        # goal and material are W by H matrices.
+    def __init__(self, stock, pos):
+        # stock is a W by H NumPy array.
         # 0.0 represents empty space, and 1.0 represents material.
-        # One element of self.material is 2.0, namely self.pos.
-        self.goal = goal
-        self.material = material
+        # self.stock[self.pos] == 2.0 to indicate the location of the endmill.
+        self.stock = stock
         self.pos = pos
-        # 0 => non-terminal, 1 => failure, 2 => success
-        self.terminal_code = terminal
+
+    def __eq__(self, other):
+        return (self.stock == other.stock).all()
+
+    def __ne__(self, other):
+        return not self == other
 
     def __hash__(self):
-        return hash(self.material.data)
+        return hash(self.stock.data)
 
-    def perform_action(self, action):
-        # 0 => right
-        # 1 => up
-        # 2 => left
-        # 3 => down
+    # Takes an action, and returns the successor State and a status code.
+    # Action codes:
+    #   0 => right
+    #   1 => up
+    #   2 => left
+    #   3 => down
+    # Status codes:
+    #   0 means we moved to an empty block
+    #   1 means we moved a block we want to mill
+    #   -1 means we moved onto a part block (i.e. gouged the part)
+    #   -2 means we went out of bounds
+    #   -3 means we tried to perform an invalid action
+    def step(self, part, action):
         if action == 0:
             if self.pos[0] < W - 1:
-                return self._transition_to_new_state((self.pos[0] + 1, self.pos[1]))
+                return self._successor(part, (self.pos[0] + 1, self.pos[1]))
         elif action == 1:
             if self.pos[1] < H - 1:
-                return self._transition_to_new_state((self.pos[0], self.pos[1] + 1))
+                return self._successor(part, (self.pos[0], self.pos[1] + 1))
         elif action == 2:
             if self.pos[0] > 0:
-                return self._transition_to_new_state((self.pos[0] - 1, self.pos[1]))
+                return self._successor(part, (self.pos[0] - 1, self.pos[1]))
         elif action == 3:
             if self.pos[1] > 0:
-                return self._transition_to_new_state((self.pos[0], self.pos[1] - 1))
-
-        # If we haven't returned already it means we tried to go out of bounds (or used an invalid
-        # action token). This leads to a terminal state.
-        new_state = State(self.goal, self.material, self.pos, 1)
-        return 0.0, new_state
-
-    def as_numpy_array(self):
-        return np.array([self.goal, self.material])
-
-    def terminal(self):
-        return self.terminal_code != 0
-
-    def successful(self):
-        return self.terminal_code == 2
-
-    def discount_factor(self):
-        if self.terminal():
-            return 0.
+                return self._successor(part, (self.pos[0], self.pos[1] - 1))
         else:
-            return 1.
+            return State(self.stock, self.pos), -3
 
-    def max_cumulative_reward(self):
-        if self.terminal():
-            return 0.0
-        # If we're not in a terminal state, self.goal[i, j] == 1.0 => self.material[i, j] == 1.0.
-        # Thus self.material - self.goal only contains positive entries. The sum of these entries
-        # is the number of blocks that remain to be milled plus 2.0.
-        return np.sum(self.material - self.goal) - 2.0
+        # If we haven't returned already it means we tried to go out of bounds.
+        return State(self.stock, self.pos), -2
 
-    def _transition_to_new_state(self, new_pos):
-        material = np.copy(self.material)
-        material[self.pos] = 0.0
-        material[new_pos] = 0.0
-        r = 0.0
-        terminal_code = 0
-        if self.goal[new_pos] == 1.0:
-            terminal_code = 1
+    def _successor(self, part, new_pos):
+        stock = np.copy(self.stock)
+        stock[self.pos] = 0.0
+        stock[new_pos] = 0.0
+        status = None
+        if part[new_pos] == 1.0:
+            status = -1
         else:
-            if self.material[new_pos] == 1.0:
-                r = 1.0
-            # This sum gives the number of remaining blocks that should be milled.
-            if np.sum(material - self.goal) == 0:
-                terminal_code = 2
-        # This is how we convey the current position to the network.
-        material[new_pos] = 2.0
-        material.flags.writeable = False
-        return r, State(self.goal, material, new_pos, terminal_code)
+            if self.stock[new_pos] == 1.0:
+                status = 1
+            else:
+                status = 0
+        # This is indicates the current position.
+        stock[new_pos] = 2.0
+        stock.flags.writeable = False
+        return State(stock, new_pos), status
 
 
-class Episode:
+class StepInfo:
+    def __init__(self, status, deja_vu):
+        # A status code as returned by State.step
+        self.status = status
+        # True if we've been in this state before
+        self.deja_vu = deja_vu
+
+
+class Environment:
     def __init__(self):
-        self.current_state = generate_initial_state()
-        self.history = []
-        self.past_transitions = {}
-        self.cumulative_reward = 0.0
-        self.max_cumulative_reward = self.current_state.max_cumulative_reward()
+        # Note: the next two properties aren't yet used.
+        self.action_space = [0, 1, 2, 3] # right, up, left, down
+        self.observation_space = None # will be an OpenAI Box
+        # Maps a status code from State.step to a reward
+        self.reward_map = {
+            0: 0.0,
+            1: 1.0,
+            -1: 0.0,
+            -2: 0.0,
+            -3: 0.0
+        }
+        self.done_map = {
+            0: False,
+            1: False,
+            -1: True,
+            -2: True,
+            -3: True
+        }
 
-    def perform_action(self, a):
-        # Record the action
-        self.history.append(a)
-        h = hash(self.current_state)
-        if h not in self.past_transitions:
-            self.past_transitions[h] = set()
-        self.past_transitions[h].add(a)
+    def reset(self):
+        start = random_point_on_rectangle((0, 0), W, H)
+        self.part = generate_part()
+        self.state = generate_stock(start)
+        self.history = []
+        self.transitions = {}
+        return np.array([self.part, self.state.stock])
+
+    # Returns an observation (NumPy array), a reward (float), done (bool), and a StepInfo object
+    def step(self, action):
+        # Record this state and action
+        self.history.append(self.state)
+        if self.state not in self.transitions:
+            self.transitions[self.state] = set()
+        self.transitions[self.state].add(action)
 
         # Perform the action
-        r, s = self.current_state.perform_action(a)
-        self.current_state = s
-        self.cumulative_reward += r
+        self.state, status = self.state.step(self.part, action)
+        deja_vu = self.state in self.transitions
+        info = StepInfo(status, deja_vu)
+        return np.array([self.part, self.state.stock]), self.reward_map[status], self.done_map[status], info
 
-        return r, s
-
-    def unexplored_actions(self):
-        h = hash(self.current_state)
-        if h not in self.past_transitions:
-            return set(range(0, 4))
-        #return set(range(0, 4)) - self.past_transitions[h]
-        explored = self.past_transitions[h]
-        return set(i for i in range(0, 4) if i not in explored)
-
-    def in_repeated_state(self):
-        return hash(self.current_state) in self.past_transitions
-
-    def in_terminal_state(self):
-        return self.current_state.terminal()
-
-    def actions(self):
-        return len(self.history)
+    def remaining_stock_blocks(self):
+        # If we're not done, self.part[i, j] == 1.0 => self.state.stock[i, j] == 1.0.
+        # Thus self.state.stock - self.part only contains positive entries. The sum of these entries
+        # is the number of blocks that must still be milled, plus 2.0 from the endmill position.
+        return np.sum(self.state.stock - self.part) - 2.0
 
 
 # Given a point within the stock region, yields all neighboring points in the stock region.
@@ -178,13 +181,13 @@ def random_point_on_rectangle(p, w, h):
         return (p[0], p[1] + i - (2 * w + h))
 
 
-def generate_goal():
-    goal = np.zeros((W, H), dtype=np.float32)
+def generate_part():
+    part = np.zeros((W, H), dtype=np.float32)
 
     # Choose a seed point for the shape.
     x = random.randint(1, W - 2)
     y = random.randint(1, H - 2)
-    goal[x, y] = 1.0
+    part[x, y] = 1.0
     boundary = set()
     boundary.update(get_neighbors((x, y)))
 
@@ -192,16 +195,16 @@ def generate_goal():
     n = random.randint(0, 2 * W * H / 3)
     for _ in range(1, n):
         p = random.choice(list(boundary))
-        goal[p] = 1.0
-        boundary.update(neighbor for neighbor in get_neighbors(p) if goal[neighbor] == 0.0)
+        part[p] = 1.0
+        boundary.update(neighbor for neighbor in get_neighbors(p) if part[neighbor] == 0.0)
 
     # Partition the empty spaces into connected components.
     component_sets = []
     point_to_component = dict()
     for i in range(0, W):
         for j in range(0, H):
-            if goal[i, j] == 0.0:
-                neighbors = [nbr for nbr in get_half_neighbors((i, j)) if goal[nbr] == 0.0]
+            if part[i, j] == 0.0:
+                neighbors = [nbr for nbr in get_half_neighbors((i, j)) if part[nbr] == 0.0]
                 if len(neighbors):
                     component_1 = point_to_component[neighbors[0]]
                     point_to_component[(i, j)] = component_1
@@ -222,35 +225,30 @@ def generate_goal():
     for component in component_sets:
         if not any(on_boundary(p) for p in component):
             for p in component:
-                goal[p] = 1.0
+                part[p] = 1.0
 
     # If we filled in the entire millable area, we need to remove a block of material.
-    if np.sum(goal) == (W - 2) * (H - 2):
+    if np.sum(part) == (W - 2) * (H - 2):
         # Accessible blocks are in a rectangle with corners (1, 1), (W - 2, 1), (W - 2, H - 2),
         # and (1, H - 2).
-        goal[random_point_on_rectangle((1, 1), W - 2, H - 2)] = 0.0
+        part[random_point_on_rectangle((1, 1), W - 2, H - 2)] = 0.0
 
     # Finally done
-    goal.flags.writeable = False
-    return goal
+    part.flags.writeable = False
+    return part
 
 
 def generate_stock(pos = (0, 0)):
-    material = np.ones((W, H), dtype=np.float32)
+    stock = np.ones((W, H), dtype=np.float32)
     for i in range(0, W):
-        material[i, 0] = 0.0
-        material[i, H - 1] = 0.0
+        stock[i, 0] = 0.0
+        stock[i, H - 1] = 0.0
     for j in range(1, H - 1):
-        material[0, j] = 0.0
-        material[W - 1, j] = 0.0
-    material[pos] = 2.0
-    material.flags.writeable = False
-    return material
-
-
-def generate_initial_state():
-    start = random_point_on_rectangle((0, 0), W, H)
-    return State(generate_goal(), generate_stock(start), start, False)
+        stock[0, j] = 0.0
+        stock[W - 1, j] = 0.0
+    stock[pos] = 2.0
+    stock.flags.writeable = False
+    return State(stock, pos)
 
 
 def display_ascii(grid):
@@ -272,7 +270,7 @@ def display_ascii(grid):
 
 if __name__ == "__main__":
     for _ in range(0, 100):
-        grid = generate_goal()
+        grid = generate_part()
         display_ascii(grid)
         print('\n')
 
