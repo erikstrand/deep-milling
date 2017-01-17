@@ -4,15 +4,15 @@ Experiments in deep learning, vaguely related to CNC toolpath generation.
 
 ## TODO
 
- - use openai gym
-   - provides standardized environment class, etc.
+ - dropout
 
- - use tensorboard for visualizing how training is going
+ - clean up graph a bit
 
- - last layers need to be linear!
+ - try mix of softmax and uniform distributions for sampling, instead of switching between MLE and uniform
 
- - explicitly tell the AdamOptimizer which things to optimize over
+ - track softmax of last layer (how confident are we that we're making the right move?)
 
- - make function for making a layer. it can default to using relu at the end, or i can pass it no op for last layers
-   - use scopes
+ - plug this model into openai gym
+
+ - explicitly tell the AdamOptimizer which things to optimize over?
 
