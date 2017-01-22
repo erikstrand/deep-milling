@@ -199,7 +199,14 @@ class Model:
         # Memory bank
         self.memory = MemoryBank(memory_capacity)
 
+        # Summary stats
+        average_reward = tf.reduce_mean(reward_q)
+        tf.summary.scalar("expected reward (q)", average_reward)
+        self.summaries = tf.summary.merge_all()
+
     def train(self, sess):
+        summary_writer = tf.train.SummaryWriter("./train", sess.graph)
+
         # Seed memory bank
         env = Environment()
         while len(self.memory.data) < memory_initial:
@@ -241,7 +248,7 @@ class Model:
             not_done = np.array([0.0 if d else 1.0  for o1, a, r, o2, d in sample])
 
             # Update the q and target networks.
-            sess.run(self.optimize, {
+            summary, _ = sess.run([self.summaries, self.optimize], {
                 self.X_q: obs1,
                 self.X_t: obs2,
                 self.action: actions,
@@ -249,11 +256,14 @@ class Model:
                 self.not_done: not_done,
             })
             sess.run(self.update_averages)
+            summary_writer.add_summary(summary, i)
 
             # update epsilon
             if i <= epsilon_ramp:
                 ramp_completion = float(i) / epsilon_ramp
                 epsilon = (1.0 - ramp_completion) * epsilon_0 + ramp_completion * epsilon_1
+
+            summary_writer
 
             # Print an update if applicable
             if i % print_interval == 0:
