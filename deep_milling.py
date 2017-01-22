@@ -138,6 +138,23 @@ class MemoryBank:
         return len(self.data)
 
 
+def relu_layer_with_ema(scope_name, input1, input2, n_inputs, n_outputs, ema, linear=False):
+    with tf.variable_scope(scope_name) as scope:
+        weights = tf.get_variable("weights", (n_inputs, n_outputs), initializer=tf.truncated_normal_initializer(0.1))
+        biases = tf.get_variable("biases", (n_outputs), initializer=tf.constant_initializer(0.01))
+        ema_name = scope.name + "_ema"
+        update_ema = ema.apply([weights, biases])
+        weights_ema = ema.average(weights)
+        biases_ema = ema.average(biases)
+        if linear:
+            output = tf.add(tf.matmul(input1, weights), biases, name=scope.name)
+            output_ema = tf.add(tf.matmul(input2, weights_ema), biases_ema, name=ema_name)
+        else:
+            output = tf.nn.relu(tf.matmul(input1, weights) + biases, name=scope.name)
+            output_ema = tf.nn.relu(tf.matmul(input2, weights_ema) + biases_ema, name=ema_name)
+        return output, output_ema, update_ema
+
+
 class Model:
     def __init__(self):
         # Network Hyperparameters
@@ -152,55 +169,38 @@ class Model:
         self.reward = tf.placeholder(tf.float32, [minibatch_size])
         self.not_done = tf.placeholder(tf.float32, [minibatch_size])
 
-        # Model parameters for Q function
-        W1_q = tf.Variable(tf.truncated_normal([W * H * 2, self.L], stddev=0.1), name="W1")
-        B1_q = tf.Variable(tf.ones([self.L])/10, name="B1")
-        W2_q = tf.Variable(tf.truncated_normal([self.L, self.M], stddev=0.1), name="W2")
-        B2_q = tf.Variable(tf.ones([self.M])/10, name="B2")
-        W3_q = tf.Variable(tf.truncated_normal([self.M, self.N], stddev=0.1), name="W3")
-        B3_q = tf.Variable(tf.ones([self.N])/10, name="B3")
-        W4_q = tf.Variable(tf.truncated_normal([self.N, A], stddev=0.1), name="W4")
-        B4_q = tf.Variable(tf.ones([A])/10, name="B4")
-
-        # The target network uses moving averages of the Q network.
-        ema = tf.train.ExponentialMovingAverage(decay=target_network_decay)
-        self.update_averages = ema.apply([W1_q, B1_q, W2_q, B2_q, W3_q, B3_q, W4_q, B4_q])
-        W1_t = ema.average(W1_q)
-        B1_t = ema.average(B1_q)
-        W2_t = ema.average(W2_q)
-        B2_t = ema.average(B2_q)
-        W3_t = ema.average(W3_q)
-        B3_t = ema.average(B3_q)
-        W4_t = ema.average(W4_q)
-        B4_t = ema.average(B4_q)
+        # Actual feed tensors
+        XX_q = tf.reshape(self.X_q, [-1, 2 * W * H])
+        XX_t = tf.reshape(self.X_t, [-1, 2 * W * H])
 
         # The model
-        XX_q = tf.reshape(self.X_q, [-1, 2 * W * H])
-        Y1_q = tf.nn.relu(tf.matmul(XX_q, W1_q) + B1_q)
-        Y2_q = tf.nn.relu(tf.matmul(Y1_q, W2_q) + B2_q)
-        Y3_q = tf.nn.relu(tf.matmul(Y2_q, W3_q) + B3_q)
-        Y4_q = tf.nn.relu(tf.matmul(Y3_q, W4_q) + B4_q)
+        ema = tf.train.ExponentialMovingAverage(decay=target_network_decay)
+        q1, t1, ema1 = relu_layer_with_ema("layer1", XX_q, XX_t, 2 * W * H, self.L, ema)
+        q2, t2, ema2 = relu_layer_with_ema("layer2", q1, t1, self.L, self.M, ema)
+        q3, t3, ema3 = relu_layer_with_ema("layer3", q2, t2, self.M, self.N, ema)
+        q4, t4, ema4 = relu_layer_with_ema("layer4", q3, t3, self.N, A, ema, linear=True)
 
-        XX_t = tf.reshape(self.X_t, [-1, 2 * W * H])
-        Y1_t = tf.nn.relu(tf.matmul(XX_t, W1_t) + B1_t)
-        Y2_t = tf.nn.relu(tf.matmul(Y1_t, W2_t) + B2_t)
-        Y3_t = tf.nn.relu(tf.matmul(Y2_t, W3_t) + B3_t)
-        Y4_t = tf.nn.relu(tf.matmul(Y3_t, W4_t) + B4_t)
+        # Update exponential moving averages (for the target network)
+        self.update_emas = tf.group(ema1, ema2, ema3, ema4)
 
         # Used to select actions
-        self.best_action = tf.argmax(Y4_q, 1)
+        self.best_action = tf.argmax(q4, 1)
+
+        # Expected rewards for the specified actions
+        q_reward = tf.reduce_sum(tf.one_hot(self.action, A) * q4, 1)
+
+        # Expected rewards for the specified actions and immediate rewards
+        t_reward = tf.add(self.reward, tf.mul(gamma * self.not_done, tf.reduce_max(t4, 1)))
 
         # Loss
-        reward_q = tf.reduce_sum(tf.one_hot(self.action, A) * Y4_q, 1)
-        reward_t = tf.add(self.reward, tf.mul(gamma * self.not_done, tf.reduce_max(Y4_t, 1)))
-        expected_squared_error = tf.reduce_mean(tf.square(tf.sub(reward_q, reward_t)))
+        expected_squared_error = tf.reduce_mean(tf.square(tf.sub(q_reward, t_reward)))
         self.optimize = tf.train.AdamOptimizer(learning_rate).minimize(expected_squared_error)
 
         # Memory bank
         self.memory = MemoryBank(memory_capacity)
 
         # Summary stats
-        average_reward = tf.reduce_mean(reward_q)
+        average_reward = tf.reduce_mean(q_reward)
         tf.summary.scalar("expected reward (q)", average_reward)
         self.summaries = tf.summary.merge_all()
 
@@ -255,7 +255,7 @@ class Model:
                 self.reward: rewards,
                 self.not_done: not_done,
             })
-            sess.run(self.update_averages)
+            sess.run(self.update_emas)
             summary_writer.add_summary(summary, i)
 
             # update epsilon
