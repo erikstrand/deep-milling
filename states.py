@@ -39,7 +39,7 @@ class State:
     #   3 => down
     # Status codes:
     #   0 means we moved to an empty block
-    #   1 means we moved a block we want to mill
+    #   1 means we moved to a block we want to mill
     #   -1 means we moved onto a part block (i.e. gouged the part)
     #   -2 means we went out of bounds
     #   -3 means we tried to perform an invalid action
@@ -109,7 +109,8 @@ class Environment:
             -3: True
         }
 
-    def reset(self):
+    def reset(self, allow_loops=False):
+        self.allow_loops = allow_loops
         start = random_point_on_rectangle((0, 0), W, H)
         self.part = generate_part()
         self.state = generate_stock(start)
@@ -129,7 +130,12 @@ class Environment:
         self.state, status = self.state.step(self.part, action)
         deja_vu = self.state in self.transitions
         info = StepInfo(status, deja_vu)
-        return np.array([self.part, self.state.stock]), self.reward_map[status], self.done_map[status], info
+        done = self.done_map[status]
+        if self.remaining_stock_blocks() == 0:
+            done = True
+        if not self.allow_loops and deja_vu:
+            done = True
+        return np.array([self.part, self.state.stock]), self.reward_map[status], done, info
 
     def remaining_stock_blocks(self):
         # If we're not done, self.part[i, j] == 1.0 => self.state.stock[i, j] == 1.0.
