@@ -3,9 +3,9 @@ import tensorflow as tf
 tf.set_random_seed(2016)
 
 # Training hyperparameters
-training_episodes = 100000
+training_episodes = 250000
 memory_capacity = 100000 # transitions in experience memory
-memory_initial = 25000
+memory_initial = 50000
 minibatch_size = 64
 target_network_decay = 0.99
 learning_rate = 0.001
@@ -14,15 +14,15 @@ learning_rate = 0.001
 gamma = 0.99
 epsilon_0 = 1.0
 epsilon_1 = 0.01
-epsilon_ramp = 75000.0
-
-# Evaluation hyperparameters
-evaluation_episodes = 500
+epsilon_ramp = 100000.0
 
 
 class MemoryBank:
     def __init__(self, capacity):
         self.capacity = capacity
+        self.reset()
+
+    def reset(self):
         self.data = []
         self.index = 0
 
@@ -68,13 +68,11 @@ class Model:
 
         # Placeholders
         self.X_q = tf.placeholder(tf.float32, [None, 2, W, H])
-        self.X_t = tf.placeholder(tf.float32, [minibatch_size, 2, W, H])
-        self.action = tf.placeholder(tf.int32, [minibatch_size])
-        self.reward = tf.placeholder(tf.float32, [minibatch_size])
-        self.not_done = tf.placeholder(tf.float32, [minibatch_size])
+        self.X_t = tf.placeholder(tf.float32, [None, 2, W, H])
+        self.action = tf.placeholder(tf.int32, [None])
+        self.reward = tf.placeholder(tf.float32, [None])
+        self.not_done = tf.placeholder(tf.float32, [None])
         
-        self.score = tf.placeholder(tf.float32, [1])
-
         # Actual feed tensors
         XX_q = tf.reshape(self.X_q, [-1, 2 * W * H])
         XX_t = tf.reshape(self.X_t, [-1, 2 * W * H])
@@ -106,13 +104,36 @@ class Model:
         self.memory = MemoryBank(memory_capacity)
 
         # Summary stats
-        tf.summary.scalar("expected reward (q)", tf.reduce_mean(q_reward))
-        tf.summary.scalar("expected reward (t)", tf.reduce_mean(t_reward))
-        tf.summary.scalar("expected_squared_error", expected_squared_error)
+        with tf.name_scope("net_stats"):
+            tf.summary.scalar("expected reward (q)", tf.reduce_mean(q_reward))
+            tf.summary.scalar("expected reward (t)", tf.reduce_mean(t_reward))
+            tf.summary.scalar("expected_squared_error", expected_squared_error)
+
+        with tf.name_scope("layer_4_stats"):
+            mean = tf.reduce_mean(q4)
+            tf.summary.scalar("layer_4_mean", mean)
+            with tf.name_scope("std_dev"):
+                stddev = tf.sqrt(tf.reduce_mean(tf.square(q4 - mean)))
+            tf.summary.scalar("layer_4_std_dev", stddev)
+            tf.summary.scalar('max', tf.reduce_max(q4))
+            tf.summary.scalar('min', tf.reduce_min(q4))
+
+        # Performance stats
+        self.test_episodes = 10
+        with tf.name_scope("environment_stats"):
+            self.test_actions = tf.placeholder(tf.float32, (None))
+            self.test_scores = tf.placeholder(tf.float32, (None))
+            self.test_limits = tf.placeholder(tf.float32, (None))
+            tf.summary.scalar("actions per episode", tf.reduce_mean(self.test_actions))
+            tf.summary.scalar("score ratio", tf.reduce_mean(self.test_scores / self.test_limits))
+            tf.summary.scalar("score per action", tf.reduce_mean(self.test_scores / self.test_actions))
+
         self.summaries = tf.summary.merge_all()
 
     def train(self, sess):
-        summary_writer = tf.summary.FileWriter("./train", sess.graph)
+        train_writer = tf.summary.FileWriter("./train", sess.graph)
+        test_writer = tf.summary.FileWriter("./test", sess.graph)
+        test_memory = MemoryBank(self.test_episodes)
 
         # Seed memory bank
         env = Environment()
@@ -131,6 +152,9 @@ class Model:
             # Generate new state/action pairs according to the current Q function
             prior_obs = env.reset()
             done = False
+            train_actions = 0
+            train_score = 0
+            train_limit = env.remaining_stock_blocks()
             while not done:
                 if random.random() < epsilon:
                     a = random.randint(0, 3)
@@ -139,6 +163,8 @@ class Model:
                 post_obs, reward, done, info = env.step(a)
                 self.memory.store(prior_obs, a, reward, post_obs, done)
                 prior_obs = post_obs
+                train_actions += 1
+                train_score += reward
 
             # Get a sample
             sample = self.memory.sample(minibatch_size)
@@ -155,9 +181,12 @@ class Model:
                 self.action: actions,
                 self.reward: rewards,
                 self.not_done: not_done,
+                self.test_actions: np.array([train_actions]),
+                self.test_scores: np.array([train_score]),
+                self.test_limits: np.array([train_limit])
             })
             sess.run(self.update_emas)
-            summary_writer.add_summary(summary, i)
+            train_writer.add_summary(summary, i)
 
             # update epsilon
             if i <= epsilon_ramp:
@@ -166,30 +195,39 @@ class Model:
 
             if i % 1000 == 0:
                 # Perform an evaluation run (no random actions)
-                test_episodes = 10
-                actions = np.zeros((test_episodes))
-                scores = np.zeros((test_episodes))
-                possible_scores = np.zeros((test_episodes))
-                for j in range(0, 10):
+				test_memory.reset()
+                test_actions = np.zeros((self.test_episodes))
+                test_scores = np.zeros((self.test_episodes))
+                test_limits = np.zeros((self.test_episodes))
+                for j in range(0, self.test_episodes):
                     prior_obs = env.reset()
                     done = False
-                    possible_scores[j] = env.remaining_stock_blocks()
+                    test_limits[j] = env.remaining_stock_blocks()
                     while not done:
                         a = evaluator(prior_obs)
                         post_obs, reward, done, info = env.step(a)
-                        self.memory.store(prior_obs, a, reward, post_obs, done)
+                        test_memory.store(prior_obs, a, reward, post_obs, done)
                         prior_obs = post_obs
-                        actions[j] += 1
-                        scores[j] += reward
-                total_actions = np.sum(actions)
-                total_score = np.sum(scores)
-                total_possible_score = np.sum(possible_scores)
-                score_ratios = scores / possible_scores
+                        test_actions[j] += 1
+                        test_scores[j] += reward
+                sample = test_memory.sample(self.test_episodes)
+                obs1     = np.array([o1 for o1, a, r, o2, d in sample])
+                actions  = np.array([a  for o1, a, r, o2, d in sample])
+                rewards  = np.array([r  for o1, a, r, o2, d in sample])
+                obs2     = np.array([o2 for o1, a, r, o2, d in sample])
+                not_done = np.array([0.0 if d else 1.0  for o1, a, r, o2, d in sample])
                 print("Episode " + str(i) + ": epsilon = " + str(epsilon))
-                print("  Performed " + str(total_actions) + " total actions, average of " + str(np.mean(actions)) + " per episode")
-                print("  Scored " + str(total_score) + " of " + str(total_possible_score) + " (" + str(100*total_score/total_possible_score) + "%)")
-                print("  Average score per episode: " + str(np.mean(scores)) + ", average score ratio per episode: " + str(np.mean(score_ratios)))
-
+                summary = sess.run(self.summaries, {
+                    self.X_q: obs1,
+                    self.X_t: obs2,
+                    self.action: actions,
+                    self.reward: rewards,
+                    self.not_done: not_done,
+                    self.test_actions: test_actions,
+                    self.test_scores: test_scores,
+                    self.test_limits: test_limits,
+                })
+                test_writer.add_summary(summary, i)
 
 if __name__ == "__main__":
     model = Model()
