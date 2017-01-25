@@ -96,10 +96,10 @@ class Environment:
         self.observation_space = None # will be an OpenAI Box
         # Maps a status code from State.step to a reward
         self.reward_map = {
-            0: 0.0,
+            0: -0.25,
             1: 1.0,
-            -1: 0.0,
-            -2: 0.0,
+            -1: -10.0,
+            -2: -10.0,
             -3: 0.0
         }
         self.done_map = {
@@ -131,12 +131,14 @@ class Environment:
         self.state, status = self.state.step(self.part, action)
         deja_vu = self.state in self.transitions
         info = StepInfo(status, deja_vu)
+        reward = self.reward_map[status]
         done = self.done_map[status]
         if self.remaining_stock_blocks() == 0:
             done = True
+            reward += 10.0
         if not self.allow_loops and deja_vu:
             done = True
-        return np.array([self.part, self.state.stock]), self.reward_map[status], done, info
+        return np.array([self.part, self.state.stock]), reward, done, info
 
     def remaining_stock_blocks(self):
         # If we're not done, self.part[i, j] == 1.0 => self.state.stock[i, j] == 1.0.
@@ -150,13 +152,12 @@ class Environment:
         pixel_dims = (H * n, 2 * W * n + band, 3)
         data = np.zeros(pixel_dims, dtype=np.uint8)
 
-        part = env.part
         for i in range(0, W):
             for j in range(0, H):
-                if part[i, j] == 0.0:
+                if self.part[i, j] == 0.0:
                     data[n*i:n*(i+1), n*j:n*(j+1)] = [240, 240, 240]
 
-        stock = env.state.stock
+        stock = self.state.stock
         for i in range(0, W):
             for j in range(0, H):
                 if stock[i, j] == 0.0:
@@ -284,5 +285,6 @@ if __name__ == "__main__":
     env = Environment()
     env.reset()
     image = env.pil_image()
-    image.show()
+    #image.show()
+    image.save("newdir/thing.jpg")
 
