@@ -117,6 +117,8 @@ class Environment:
         self.state = generate_stock(start)
         self.history = []
         self.transitions = {}
+        self.blocks_milled = 0.0
+        self.death_reward = 0.0
         return np.array([self.part, self.state.stock])
 
     # Returns an observation (NumPy array), a reward (float), done (bool), and a StepInfo object
@@ -133,9 +135,14 @@ class Environment:
         info = StepInfo(status, deja_vu)
         reward = self.reward_map[status]
         done = self.done_map[status]
-        if self.remaining_stock_blocks() == 0:
-            done = True
-            reward += 10.0
+        if done:
+            self.death_reward = reward
+        elif status == 1:
+            self.blocks_milled += 1.0
+            if self.remaining_stock_blocks() == 0:
+                done = True
+                reward += 10.0
+                self.death_reward = 10.0
         if not self.allow_loops and deja_vu:
             done = True
         return np.array([self.part, self.state.stock]), reward, done, info

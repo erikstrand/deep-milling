@@ -124,11 +124,16 @@ class Model:
         self.test_episodes = 10
         with tf.name_scope("environment_stats"):
             self.test_actions = tf.placeholder(tf.float32, (None))
-            self.test_scores = tf.placeholder(tf.float32, (None))
-            self.test_limits = tf.placeholder(tf.float32, (None))
+            self.test_blocks_milled = tf.placeholder(tf.float32, (None))
+            self.test_max_blocks_milled = tf.placeholder(tf.float32, (None))
+            self.test_total_rewards = tf.placeholder(tf.float32, (None))
+            self.test_death_rewards = tf.placeholder(tf.float32, (None))
+            max_rewards = self.test_max_blocks_milled + 10.0
             tf.summary.scalar("actions per episode", tf.reduce_mean(self.test_actions))
-            tf.summary.scalar("score ratio", tf.reduce_mean(self.test_scores / self.test_limits))
-            tf.summary.scalar("score per action", tf.reduce_mean(self.test_scores / self.test_actions))
+            tf.summary.scalar("blocks milled ratio", tf.reduce_mean(self.test_blocks_milled / self.test_max_blocks_milled))
+            tf.summary.scalar("blocks per action", tf.reduce_mean(self.test_blocks_milled / self.test_actions))
+            tf.summary.scalar("perfectness", tf.reduce_mean(self.test_total_rewards / max_rewards))
+            tf.summary.scalar("death honor", tf.reduce_mean(self.test_death_rewards))
 
         self.summaries = tf.summary.merge_all()
 
@@ -154,9 +159,9 @@ class Model:
             # Generate new state/action pairs according to the current Q function
             prior_obs = env.reset()
             done = False
-            train_actions = 0
-            train_score = 0
-            train_limit = env.remaining_stock_blocks()
+            train_actions = 0.0
+            train_max_blocks_milled = env.remaining_stock_blocks()
+            train_total_reward = 0.0
             while not done:
                 if random.random() < epsilon:
                     a = random.randint(0, 3)
@@ -165,8 +170,10 @@ class Model:
                 post_obs, reward, done, info = env.step(a)
                 self.memory.store(prior_obs, a, reward, post_obs, done)
                 prior_obs = post_obs
-                train_actions += 1
-                train_score += reward
+                train_actions += 1.0
+                train_total_reward += reward
+            train_blocks_milled = env.blocks_milled
+            train_death_reward = env.death_reward
 
             # Get a sample
             sample = self.memory.sample(minibatch_size)
@@ -184,8 +191,10 @@ class Model:
                 self.reward: rewards,
                 self.not_done: not_done,
                 self.test_actions: np.array([train_actions]),
-                self.test_scores: np.array([train_score]),
-                self.test_limits: np.array([train_limit])
+                self.test_blocks_milled: np.array([train_blocks_milled]),
+                self.test_max_blocks_milled: np.array([train_max_blocks_milled]),
+                self.test_total_rewards: np.array([train_total_reward]),
+                self.test_death_rewards: np.array([train_death_reward])
             })
             # TODO this is gross... let's group update_emas into optimize.
             sess.run(self.update_emas)
@@ -202,13 +211,15 @@ class Model:
                 test_memory.reset()
                 images = {}
                 test_actions = np.zeros((self.test_episodes))
-                test_scores = np.zeros((self.test_episodes))
-                test_limits = np.zeros((self.test_episodes))
+                test_blocks_milled = np.zeros((self.test_episodes))
+                test_max_blocks_milled = np.zeros((self.test_episodes))
+                test_total_rewards = np.zeros((self.test_episodes))
+                test_death_rewards = np.zeros((self.test_episodes))
                 for j in range(0, self.test_episodes):
                     k = 0
                     prior_obs = env.reset()
                     done = False
-                    test_limits[j] = env.remaining_stock_blocks()
+                    test_max_blocks_milled[j] = env.remaining_stock_blocks()
                     images[(j, k)] = env.pil_image()
                     while not done:
                         k += 1
@@ -216,9 +227,11 @@ class Model:
                         post_obs, reward, done, info = env.step(a)
                         test_memory.store(prior_obs, a, reward, post_obs, done)
                         prior_obs = post_obs
-                        test_actions[j] += 1
-                        test_scores[j] += reward
+                        test_actions[j] += 1.0
+                        test_total_rewards[j] += reward
                         images[(j, k)] = env.pil_image()
+                    test_blocks_milled[j] = env.blocks_milled
+                    test_death_rewards[j] = env.death_reward
 
                 sample = test_memory.sample(self.test_episodes)
                 obs1     = np.array([o1 for o1, a, r, o2, d in sample])
@@ -234,8 +247,10 @@ class Model:
                     self.reward: rewards,
                     self.not_done: not_done,
                     self.test_actions: test_actions,
-                    self.test_scores: test_scores,
-                    self.test_limits: test_limits,
+                    self.test_blocks_milled: test_blocks_milled,
+                    self.test_max_blocks_milled: test_max_blocks_milled,
+                    self.test_total_rewards: test_total_rewards,
+                    self.test_death_rewards: test_death_rewards,
                 })
                 test_writer.add_summary(summary, i)
 
