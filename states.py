@@ -1,6 +1,7 @@
 import sys
 import random
 import numpy as np
+import scipy.misc as smp
 random.seed(2016)
 
 
@@ -143,6 +144,28 @@ class Environment:
         # is the number of blocks that must still be milled, plus 2.0 from the endmill position.
         return np.sum(self.state.stock - self.part) - 2.0
 
+    def pil_image(self):
+        band = 10;
+        n = 25;  # pixels per tile
+        pixel_dims = (H * n, 2 * W * n + band, 3)
+        data = np.zeros(pixel_dims, dtype=np.uint8)
+
+        part = env.part
+        for i in range(0, W):
+            for j in range(0, H):
+                if part[i, j] == 0.0:
+                    data[n*i:n*(i+1), n*j:n*(j+1)] = [240, 240, 240]
+
+        stock = env.state.stock
+        for i in range(0, W):
+            for j in range(0, H):
+                if stock[i, j] == 0.0:
+                    data[n*i:n*(i+1), W*n + band + n*j:W*n + band + n*(j+1)] = [240, 240, 240]
+                elif stock[i, j] == 2.0:
+                    data[n*i:n*(i+1), W*n + band + n*j:W*n + band + n*(j+1)] = [0, 0, 254]
+
+        return smp.toimage(data)
+
 
 # Given a point within the stock region, yields all neighboring points in the stock region.
 def get_neighbors(p):
@@ -257,26 +280,9 @@ def generate_stock(pos = (0, 0)):
     return State(stock, pos)
 
 
-def display_ascii(grid):
-    print(' ' + W*'-')
-    for j in reversed(range(0, H)):
-        sys.stdout.write('|')
-        for i in reversed(range(0, W)):
-            if grid[i, j] == 2.0:
-                sys.stdout.write('*')
-            elif grid[i, j] == 1.0:
-                sys.stdout.write('#')
-            elif grid[i, j] == 0.0:
-                sys.stdout.write(' ')
-            else:
-                sys.stdout.write('?')
-        sys.stdout.write('|\n')
-    print(' ' + W*'-')
-
-
 if __name__ == "__main__":
-    for _ in range(0, 100):
-        grid = generate_part()
-        display_ascii(grid)
-        print('\n')
+    env = Environment()
+    env.reset()
+    image = env.pil_image()
+    image.show()
 
