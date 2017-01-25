@@ -1,9 +1,11 @@
 from states import *
 import tensorflow as tf
+import os
+import os.path
 tf.set_random_seed(2016)
 
 # Training hyperparameters
-training_episodes = 250000
+training_episodes = 500000
 memory_capacity = 100000 # transitions in experience memory
 memory_initial = 50000
 minibatch_size = 64
@@ -13,7 +15,7 @@ learning_rate = 0.001
 # Q learning hyperparameters
 gamma = 0.99
 epsilon_0 = 1.0
-epsilon_1 = 0.01
+epsilon_1 = 0.05
 epsilon_ramp = 100000.0
 
 
@@ -185,8 +187,10 @@ class Model:
                 self.test_scores: np.array([train_score]),
                 self.test_limits: np.array([train_limit])
             })
+            # TODO this is gross... let's group update_emas into optimize.
             sess.run(self.update_emas)
-            train_writer.add_summary(summary, i)
+            if i % 100 == 0:
+                train_writer.add_summary(summary, i)
 
             # update epsilon
             if i <= epsilon_ramp:
@@ -195,21 +199,27 @@ class Model:
 
             if i % 1000 == 0:
                 # Perform an evaluation run (no random actions)
-				test_memory.reset()
+                test_memory.reset()
+                images = {}
                 test_actions = np.zeros((self.test_episodes))
                 test_scores = np.zeros((self.test_episodes))
                 test_limits = np.zeros((self.test_episodes))
                 for j in range(0, self.test_episodes):
+                    k = 0
                     prior_obs = env.reset()
                     done = False
                     test_limits[j] = env.remaining_stock_blocks()
+                    images[(j, k)] = env.pil_image()
                     while not done:
+                        k += 1
                         a = evaluator(prior_obs)
                         post_obs, reward, done, info = env.step(a)
                         test_memory.store(prior_obs, a, reward, post_obs, done)
                         prior_obs = post_obs
                         test_actions[j] += 1
                         test_scores[j] += reward
+                        images[(j, k)] = env.pil_image()
+
                 sample = test_memory.sample(self.test_episodes)
                 obs1     = np.array([o1 for o1, a, r, o2, d in sample])
                 actions  = np.array([a  for o1, a, r, o2, d in sample])
@@ -228,6 +238,15 @@ class Model:
                     self.test_limits: test_limits,
                 })
                 test_writer.add_summary(summary, i)
+
+                if i % 10000 == 0:
+                    image_dir = "./img/" + str(i/1000) + "k/"
+                    if not os.path.exists(image_dir):
+                        os.makedirs(image_dir)
+                    for j, k in images:
+                        image_name = image_dir + "episode" + str(j) + "_step" + str(k) + ".jpg"
+                        images[j, k].save(image_name)
+
 
 if __name__ == "__main__":
     model = Model()
