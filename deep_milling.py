@@ -155,7 +155,7 @@ class Model:
 
         epsilon = epsilon_0
         evaluator = lambda s: sess.run(self.best_action, feed_dict = {self.X_q: [s]})[0]
-        for i in range(0, training_episodes):
+        for i in range(0, training_episodes + 1):
             # Generate new state/action pairs according to the current Q function
             prior_obs = env.reset()
             done = False
@@ -254,7 +254,7 @@ class Model:
                 })
                 test_writer.add_summary(summary, i)
 
-                if i % 10000 == 0:
+                if i % 20000 == 0:
                     image_dir = "./img/" + str(i/1000) + "k/"
                     if not os.path.exists(image_dir):
                         os.makedirs(image_dir)
