@@ -5,7 +5,7 @@ import os.path
 tf.set_random_seed(2016)
 
 # Training hyperparameters
-training_episodes = 3000000
+training_episodes = 2000000
 memory_capacity = 100000 # transitions in experience memory
 memory_initial = 50000
 minibatch_size = 64
@@ -16,7 +16,7 @@ learning_rate = 0.001
 gamma = 0.99
 epsilon_0 = 1.0
 epsilon_1 = 0.05
-epsilon_ramp = 700000.0
+epsilon_ramp = 500000.0
 
 
 class MemoryBank:
@@ -102,6 +102,10 @@ class Model:
         expected_squared_error = tf.reduce_mean(tf.square(tf.sub(q_reward, t_reward)))
         self.optimize = tf.train.AdamOptimizer(learning_rate).minimize(expected_squared_error)
 
+        # Softmax
+        with tf.name_scope("softmax"):
+            self.softmax = tf.nn.softmax(q4)
+
         # Memory bank
         self.memory = MemoryBank(memory_capacity)
 
@@ -119,6 +123,7 @@ class Model:
             tf.summary.scalar("layer_4_std_dev", stddev)
             tf.summary.scalar('max', tf.reduce_max(q4))
             tf.summary.scalar('min', tf.reduce_min(q4))
+            tf.summary.histogram("softmax_hist", self.softmax)
 
         # Performance stats
         self.test_episodes = 10
@@ -137,6 +142,13 @@ class Model:
 
         self.summaries = tf.summary.merge_all()
 
+    def action_distribution(self, s, epsilon):
+        softmax = sess.run(self.softmax, feed_dict = {self.X_q: [s]})[0]
+        dist = np.empty((A))
+        dist[0:-1] = epsilon * np.full((A - 1), 1.0/A) + (1.0 - epsilon) * softmax[0:-1]
+        dist[-1] = 1.0 - np.sum(dist[0:-1])
+        return dist
+
     def train(self, sess):
         train_writer = tf.summary.FileWriter("./train", sess.graph)
         test_writer = tf.summary.FileWriter("./test", sess.graph)
@@ -154,7 +166,6 @@ class Model:
                 prior_obs = post_obs
 
         epsilon = epsilon_0
-        evaluator = lambda s: sess.run(self.best_action, feed_dict = {self.X_q: [s]})[0]
         for i in range(0, training_episodes + 1):
             # Generate new state/action pairs according to the current Q function
             prior_obs = env.reset()
@@ -163,10 +174,7 @@ class Model:
             train_max_blocks_milled = env.remaining_stock_blocks()
             train_total_reward = 0.0
             while not done:
-                if random.random() < epsilon:
-                    a = random.randint(0, 3)
-                else:
-                    a = evaluator(prior_obs)
+                a = np.random.choice(A, p=self.action_distribution(prior_obs, epsilon))
                 post_obs, reward, done, info = env.step(a)
                 self.memory.store(prior_obs, a, reward, post_obs, done)
                 prior_obs = post_obs
@@ -223,7 +231,7 @@ class Model:
                     images[(j, k)] = env.pil_image()
                     while not done:
                         k += 1
-                        a = evaluator(prior_obs)
+                        a = sess.run(self.best_action, feed_dict = {self.X_q: [prior_obs]})[0]
                         post_obs, reward, done, info = env.step(a)
                         test_memory.store(prior_obs, a, reward, post_obs, done)
                         prior_obs = post_obs
