@@ -64,9 +64,9 @@ def relu_layer_with_ema(scope_name, input1, input2, n_inputs, n_outputs, ema, li
 class Model:
     def __init__(self):
         # Network Hyperparameters
-        self.L = 50 # neurons in first layer
-        self.M = 30 # neurons in second layer
-        self.N = 15 # neurons in third layer
+        self.L = 144 # neurons in first layer
+        self.M = 100 # neurons in second layer
+        self.N = 32 # neurons in third layer
 
         # Placeholders
         self.X_q = tf.placeholder(tf.float32, [None, 2, W, H])
