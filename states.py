@@ -9,8 +9,8 @@ random.seed(2016)
 # W and H determine the width and height of our grid.
 # The stock piece initially covers all (i, j) such that 1 <= i < W - 1 and 1 <= j < H - 2.
 # Thus W and H should both be larger than three, so the stock piece isn't trivially small.
-W = 6
-H = 6
+W = 10
+H = 10
 A = 4
 
 

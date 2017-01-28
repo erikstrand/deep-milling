@@ -5,18 +5,18 @@ import os.path
 tf.set_random_seed(2016)
 
 # Training hyperparameters
-training_episodes = 1500000
-memory_capacity = 100000 # transitions in experience memory
-memory_initial = 50000
+training_episodes = 3000000
+memory_capacity = 1000000 # transitions in experience memory
+memory_initial = 500000
 minibatch_size = 64
 target_network_decay = 0.99
-learning_rate = 0.001
+learning_rate = 0.0001
 
 # Q learning hyperparameters
 gamma = 0.99
 epsilon_0 = 1.0
 epsilon_1 = 0.01
-epsilon_ramp = 500000.0
+epsilon_ramp = 1500000.0
 
 
 class MemoryBank:
@@ -64,9 +64,10 @@ def relu_layer_with_ema(scope_name, input1, input2, n_inputs, n_outputs, ema, li
 class Model:
     def __init__(self):
         # Network Hyperparameters
-        self.L = 144 # neurons in first layer
-        self.M = 100 # neurons in second layer
-        self.N = 32 # neurons in third layer
+        self.L = 800 # neurons in first layer
+        self.M = 600 # neurons in second layer
+        self.N = 400 # neurons in third layer
+        self.O = 100 # neurons in fourth layer
 
         # Placeholders
         self.X_q = tf.placeholder(tf.float32, [None, 2, W, H])
@@ -84,19 +85,20 @@ class Model:
         q1, t1, ema1 = relu_layer_with_ema("layer1", XX_q, XX_t, 2 * W * H, self.L, ema)
         q2, t2, ema2 = relu_layer_with_ema("layer2", q1, t1, self.L, self.M, ema)
         q3, t3, ema3 = relu_layer_with_ema("layer3", q2, t2, self.M, self.N, ema)
-        q4, t4, ema4 = relu_layer_with_ema("layer4", q3, t3, self.N, A, ema, linear=True)
+        q4, t4, ema4 = relu_layer_with_ema("layer4", q3, t3, self.N, self.O, ema)
+        q5, t5, ema5 = relu_layer_with_ema("layer5", q4, t4, self.O, A, ema, linear=True)
 
         # Update exponential moving averages (for the target network)
-        self.update_emas = tf.group(ema1, ema2, ema3, ema4)
+        self.update_emas = tf.group(ema1, ema2, ema3, ema4, ema5)
 
         # Used to select actions
-        self.best_action = tf.argmax(q4, 1)
+        self.best_action = tf.argmax(q5, 1)
 
         # Expected rewards for the specified actions
-        q_reward = tf.reduce_sum(tf.one_hot(self.action, A) * q4, 1)
+        q_reward = tf.reduce_sum(tf.one_hot(self.action, A) * q5, 1)
 
         # Expected rewards for the specified actions and immediate rewards
-        t_reward = tf.add(self.reward, tf.mul(gamma * self.not_done, tf.reduce_max(t4, 1)))
+        t_reward = tf.add(self.reward, tf.mul(gamma * self.not_done, tf.reduce_max(t5, 1)))
 
         # Loss
         expected_squared_error = tf.reduce_mean(tf.square(tf.sub(q_reward, t_reward)))
@@ -104,7 +106,7 @@ class Model:
 
         # Softmax
         with tf.name_scope("softmax"):
-            self.softmax = tf.nn.softmax(q4)
+            self.softmax = tf.nn.softmax(q5)
 
         # Memory bank
         self.memory = MemoryBank(memory_capacity)
@@ -114,19 +116,21 @@ class Model:
             tf.summary.scalar("expected reward (q)", tf.reduce_mean(q_reward))
             tf.summary.scalar("expected reward (t)", tf.reduce_mean(t_reward))
             tf.summary.scalar("expected_squared_error", expected_squared_error)
+            self.tf_epsilon = tf.placeholder(tf.float32, [])
+            tf.summary.scalar("epsilon", self.tf_epsilon)
 
         with tf.name_scope("layer_4_stats"):
-            mean = tf.reduce_mean(q4)
+            mean = tf.reduce_mean(q5)
             tf.summary.scalar("layer_4_mean", mean)
             with tf.name_scope("std_dev"):
-                stddev = tf.sqrt(tf.reduce_mean(tf.square(q4 - mean)))
+                stddev = tf.sqrt(tf.reduce_mean(tf.square(q5 - mean)))
             tf.summary.scalar("layer_4_std_dev", stddev)
-            tf.summary.scalar('max', tf.reduce_max(q4))
-            tf.summary.scalar('min', tf.reduce_min(q4))
+            tf.summary.scalar('max', tf.reduce_max(q5))
+            tf.summary.scalar('min', tf.reduce_min(q5))
             tf.summary.histogram("softmax_hist", self.softmax)
 
         # Performance stats
-        self.test_episodes = 10
+        self.test_episodes = 50
         with tf.name_scope("environment_stats"):
             self.test_actions = tf.placeholder(tf.float32, (None))
             self.test_blocks_milled = tf.placeholder(tf.float32, (None))
@@ -202,11 +206,12 @@ class Model:
                 self.test_blocks_milled: np.array([train_blocks_milled]),
                 self.test_max_blocks_milled: np.array([train_max_blocks_milled]),
                 self.test_total_rewards: np.array([train_total_reward]),
-                self.test_death_rewards: np.array([train_death_reward])
+                self.test_death_rewards: np.array([train_death_reward]),
+                self.tf_epsilon: epsilon,
             })
             # TODO this is gross... let's group update_emas into optimize.
             sess.run(self.update_emas)
-            if i % 100 == 0:
+            if i % 300 == 0:
                 train_writer.add_summary(summary, i)
 
             # update epsilon
@@ -214,7 +219,7 @@ class Model:
                 ramp_completion = float(i) / epsilon_ramp
                 epsilon = (1.0 - ramp_completion) * epsilon_0 + ramp_completion * epsilon_1
 
-            if i % 1000 == 0:
+            if i % 3000 == 0:
                 # Perform an evaluation run (no random actions)
                 test_memory.reset()
                 images = {}
@@ -259,10 +264,11 @@ class Model:
                     self.test_max_blocks_milled: test_max_blocks_milled,
                     self.test_total_rewards: test_total_rewards,
                     self.test_death_rewards: test_death_rewards,
+                    self.tf_epsilon: 0.0,
                 })
                 test_writer.add_summary(summary, i)
 
-                if i % 20000 == 0:
+                if i % 12000 == 0:
                     image_dir = "./img/" + str(i/1000) + "k/"
                     if not os.path.exists(image_dir):
                         os.makedirs(image_dir)
