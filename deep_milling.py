@@ -5,7 +5,7 @@ import os.path
 tf.set_random_seed(2016)
 
 # Training hyperparameters
-training_episodes = 2000000
+training_episodes = 1500000
 memory_capacity = 100000 # transitions in experience memory
 memory_initial = 50000
 minibatch_size = 64
@@ -15,7 +15,7 @@ learning_rate = 0.001
 # Q learning hyperparameters
 gamma = 0.99
 epsilon_0 = 1.0
-epsilon_1 = 0.05
+epsilon_1 = 0.01
 epsilon_ramp = 500000.0
 
 
