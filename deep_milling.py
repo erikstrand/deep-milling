@@ -5,7 +5,7 @@ import os.path
 tf.set_random_seed(2016)
 
 # Training hyperparameters
-training_episodes = 1500000
+training_episodes = 2000000
 memory_capacity = 100000 # transitions in experience memory
 memory_initial = 50000
 minibatch_size = 64
@@ -15,7 +15,7 @@ learning_rate = 0.001
 # Q learning hyperparameters
 gamma = 0.99
 epsilon_0 = 1.0
-epsilon_1 = 0.01
+epsilon_1 = 0.0
 epsilon_ramp = 500000.0
 
 
@@ -157,7 +157,7 @@ class Model:
         # Seed memory bank
         env = Environment()
         while len(self.memory.data) < memory_initial:
-            prior_obs = env.reset()
+            prior_obs = env.reset(allow_loops=True)
             done = False
             while not done:
                 a = random.randint(0, 3)
@@ -168,7 +168,7 @@ class Model:
         epsilon = epsilon_0
         for i in range(0, training_episodes + 1):
             # Generate new state/action pairs according to the current Q function
-            prior_obs = env.reset()
+            prior_obs = env.reset(allow_loops=True)
             done = False
             train_actions = 0.0
             train_max_blocks_milled = env.remaining_stock_blocks()
@@ -225,7 +225,7 @@ class Model:
                 test_death_rewards = np.zeros((self.test_episodes))
                 for j in range(0, self.test_episodes):
                     k = 0
-                    prior_obs = env.reset()
+                    prior_obs = env.reset(allow_loops=False)
                     done = False
                     test_max_blocks_milled[j] = env.remaining_stock_blocks()
                     images[(j, k)] = env.pil_image()

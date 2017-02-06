@@ -81,27 +81,14 @@ class State:
         return State(stock, new_pos), status
 
 
-class StepInfo:
-    def __init__(self, status, deja_vu):
-        # A status code as returned by State.step
-        self.status = status
-        # True if we've been in this state before
-        self.deja_vu = deja_vu
-
-
 class Environment:
     def __init__(self):
         # Note: the next two properties aren't yet used.
         self.action_space = [0, 1, 2, 3] # right, up, left, down
         self.observation_space = None # will be an OpenAI Box
-        # Maps a status code from State.step to a reward
-        self.reward_map = {
-            0: -0.25,
-            1: 1.0,
-            -1: -10.0,
-            -2: -10.0,
-            -3: 0.0
-        }
+        self.max_steps = W * H
+        # Indicates if a status code directly implies we're done.
+        # (There can be other reasons we're done too.)
         self.done_map = {
             0: False,
             1: False,
@@ -115,37 +102,36 @@ class Environment:
         start = random_point_on_rectangle((0, 0), W, H)
         self.part = generate_part()
         self.state = generate_stock(start)
-        self.history = []
+        self.steps = 0
         self.transitions = {}
         self.blocks_milled = 0.0
         self.death_reward = 0.0
         return np.array([self.part, self.state.stock])
 
-    # Returns an observation (NumPy array), a reward (float), done (bool), and a StepInfo object
+    # Returns an observation (NumPy array), a reward (float), done (bool), and a status code
     def step(self, action):
         # Record this state and action
-        self.history.append(self.state)
         if self.state not in self.transitions:
             self.transitions[self.state] = set()
         self.transitions[self.state].add(action)
+        self.steps += 1
 
         # Perform the action
         self.state, status = self.state.step(self.part, action)
         deja_vu = self.state in self.transitions
-        info = StepInfo(status, deja_vu)
-        reward = self.reward_map[status]
+        remaining = self.remaining_stock_blocks()
+        reward = -remaining
         done = self.done_map[status]
         if done:
-            self.death_reward = reward
-        elif status == 1:
-            self.blocks_milled += 1.0
-            if self.remaining_stock_blocks() == 0:
+            reward *= self.max_steps
+        else:
+            if status == 1:
+                self.blocks_milled += 1.0
+            if remaining == 0 or self.steps == self.max_steps or (not self.allow_loops and deja_vu):
                 done = True
-                reward += 10.0
-                self.death_reward = 10.0
-        if not self.allow_loops and deja_vu:
-            done = True
-        return np.array([self.part, self.state.stock]), reward, done, info
+        if done:
+            self.death_reward = reward
+        return np.array([self.part, self.state.stock]), reward, done, status
 
     def remaining_stock_blocks(self):
         # If we're not done, self.part[i, j] == 1.0 => self.state.stock[i, j] == 1.0.
