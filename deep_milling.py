@@ -56,6 +56,8 @@ def relu_layer_with_ema(scope_name, input1, input2, n_inputs, n_outputs, ema, li
         else:
             output = tf.nn.relu(tf.matmul(input1, weights) + biases, name=scope.name)
             output_ema = tf.nn.relu(tf.matmul(input2, weights_ema) + biases_ema, name=ema_name)
+        tf.summary.histogram("weights histogram", weights)
+        tf.summary.histogram("biases histogram", biases)
         tf.summary.histogram(scope_name + " histogram", output)
         tf.summary.histogram(ema_name + " histogram", output_ema)
         return output, output_ema, update_ema
